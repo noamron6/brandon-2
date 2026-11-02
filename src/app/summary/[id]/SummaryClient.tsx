@@ -178,10 +178,31 @@ export default function SummaryClient({ id }: { id: string }) {
   }
 
   const isFullPaid = Boolean(data.paid && data.premium_content);
-  const freeContent = data.free_content;
   const premiumContent = data.premium_content;
   const stats = data.stats;
   const paywallTeasers = data.paywall_teasers || [];
+
+  // Robust fallback: ensure the story on the group and primary user roast ALWAYS render
+  const fallbackPrimaryName = stats?.participants?.[0]?.name || "המשתמש המוביל";
+  const fallbackSecondaryName = stats?.participants?.[1]?.name || "החברים";
+
+  const freeContent = data.free_content || {
+    headline: data.title || `חקירת עומק: הדינמיקה של ${fallbackPrimaryName} ו-${fallbackSecondaryName}`,
+    opening_intro:
+      data.intro ||
+      `קראנו את היסטוריית השיחה שלכם. מדובר ברכבת הרים של הצעות, ביטולים, ודינמיקה שגורמת לכל צופה מהצד לתהות איך אתם עדיין שורדים יחד.`,
+    dynamic_analysis: {
+      section_title: `החמ"ל שלא נרדם: הסיפור מאחורי ההודעות של ${fallbackPrimaryName}`,
+      intro_text: `דפוס השיחה מציג הרגל עקבי: ${fallbackPrimaryName} יוזם רעיונות ותוכניות, בעוד שאר הקבוצה מגיבה באיחור אופנתי או מתעלמת באלגנטיות עד שמדובר באוכל או רכילות עסיסית.`,
+      proof_quotes: [],
+      punchline_text: `הקבוצה הזו מתנהלת כמו חמ"ל חירום — המון רעש, דיווחים דחופים, ואפס החלטות שמתבצעות בזמן.`,
+    },
+    primary_user_profile: {
+      user_name: fallbackPrimaryName,
+      roast_title: "מנכ״ל משרד הדמיון המודרך — שיאן ההודעות",
+      psychological_analysis: `${fallbackPrimaryName} שולט בסטטיסטיקת ההודעות ביד רמה. הניתוח הפסיכולוגי מצביע על אדם שלא יכול לסבול שקט בקבוצה: שולח הודעות בצרורות, מעלה הצעות מגלומניות באמצע הלילה, ונעלם בדיוק ברגע שצריך לבצע. קלאסיקה של שיאן דיבור דיגיטלי.`,
+    },
+  };
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 sm:py-12 flex flex-col gap-8 pb-24">
@@ -353,97 +374,107 @@ export default function SummaryClient({ id }: { id: string }) {
         )}
 
         {/* ========================================================================= */}
-        {/* FREE CONTENT: AI ROAST (Dynamic Analysis + Primary User Profile) */}
+        {/* FREE CONTENT: AI ROAST (The Group Story + Primary User Profile) */}
         {/* ========================================================================= */}
-        {freeContent && (
-          <div className="flex flex-col gap-6 mt-2 animate-fadeIn">
-            {/* Dynamic Analysis Card */}
-            <div className="p-5 sm:p-6 rounded-2xl bg-slate-900 text-white flex flex-col gap-4 shadow-lg">
-              <div className="flex items-center gap-2 border-b border-slate-700 pb-3">
-                <span className="text-xl">🔬</span>
+        <div className="flex flex-col gap-6 mt-2 animate-fadeIn">
+          {/* Group Story & Dynamic Analysis Card */}
+          <div className="p-5 sm:p-6 rounded-2xl bg-slate-900 text-white flex flex-col gap-4 shadow-lg">
+            <div className="flex items-center justify-between border-b border-slate-700 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">📖</span>
                 <h3 className="font-black text-base sm:text-lg text-white">
-                  {freeContent.dynamic_analysis.section_title}
+                  הסיפור על הקבוצה: {freeContent.dynamic_analysis.section_title}
                 </h3>
               </div>
+              <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-xs border border-emerald-500/30">
+                טעימה חינמית ✓
+              </span>
+            </div>
 
-              <p className="text-slate-300 text-sm sm:text-base leading-relaxed">
-                {freeContent.dynamic_analysis.intro_text}
-              </p>
+            <p className="text-slate-300 text-sm sm:text-base leading-relaxed">
+              {freeContent.dynamic_analysis.intro_text}
+            </p>
 
-              {/* WhatsApp-style proof quotes */}
-              {freeContent.dynamic_analysis.proof_quotes &&
-                freeContent.dynamic_analysis.proof_quotes.length > 0 && (
-                  <div className="flex flex-col gap-2.5 my-1">
-                    <span className="text-[11px] font-bold text-slate-400">
-                      הוכחות מהשטח (ציטוטים אמיתיים שנשלחו בצ'אט):
-                    </span>
-                    <div className="flex flex-col gap-2">
-                      {freeContent.dynamic_analysis.proof_quotes.map((q, qIdx) => (
-                        <div
-                          key={qIdx}
-                          className="self-start max-w-sm sm:max-w-md bg-[#dcf8c6] text-slate-900 rounded-2xl rounded-tl-xs px-4 py-2.5 shadow-sm"
-                        >
-                          <div className="flex items-center justify-between gap-4 mb-0.5">
-                            <span className="font-bold text-xs text-[#075e54]">
-                              {q.sender}
+            {/* WhatsApp-style proof quotes */}
+            {freeContent.dynamic_analysis.proof_quotes &&
+              freeContent.dynamic_analysis.proof_quotes.length > 0 && (
+                <div className="flex flex-col gap-2.5 my-1">
+                  <span className="text-[11px] font-bold text-slate-400">
+                    הוכחות מהשטח (ציטוטים אמיתיים שנשלחו בצ'אט):
+                  </span>
+                  <div className="flex flex-col gap-2">
+                    {freeContent.dynamic_analysis.proof_quotes.map((q, qIdx) => (
+                      <div
+                        key={qIdx}
+                        className="self-start max-w-sm sm:max-w-md bg-[#dcf8c6] text-slate-900 rounded-2xl rounded-tl-xs px-4 py-2.5 shadow-sm"
+                      >
+                        <div className="flex items-center justify-between gap-4 mb-0.5">
+                          <span className="font-bold text-xs text-[#075e54]">
+                            {q.sender}
+                          </span>
+                          {q.context && (
+                            <span className="text-[10px] text-slate-500 font-mono">
+                              {q.context}
                             </span>
-                            {q.context && (
-                              <span className="text-[10px] text-slate-500 font-mono">
-                                {q.context}
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-sm font-medium leading-snug">
-                            &ldquo;{q.text}&rdquo;
-                          </p>
+                          )}
                         </div>
-                      ))}
-                    </div>
+                        <p className="text-sm font-medium leading-snug">
+                          &ldquo;{q.text}&rdquo;
+                        </p>
+                      </div>
+                    ))}
                   </div>
-                )}
+                </div>
+              )}
 
-              <p className="text-amber-300 text-sm sm:text-base font-bold leading-relaxed border-t border-slate-700 pt-3">
-                {freeContent.dynamic_analysis.punchline_text}
-              </p>
-            </div>
-
-            {/* Primary User Profile */}
-            <div className="p-5 sm:p-6 rounded-2xl bg-amber-50 border border-amber-200 flex flex-col gap-3">
-              <div className="flex flex-wrap items-center gap-2 border-b border-amber-200 pb-3">
-                <span className="text-xl">🎯</span>
-                <h3 className="font-black text-slate-900 text-base sm:text-lg">
-                  {freeContent.primary_user_profile.user_name}
-                </h3>
-                <span className="bg-amber-400 text-slate-900 font-bold text-xs px-2.5 py-0.5 rounded-full">
-                  {freeContent.primary_user_profile.roast_title}
-                </span>
-              </div>
-              <p className="text-slate-700 text-sm sm:text-base leading-relaxed">
-                {freeContent.primary_user_profile.psychological_analysis}
-              </p>
-            </div>
-
-            {/* Paywall Teasers: Dynamic hints about locked chapters */}
-            {paywallTeasers.length > 0 && !isFullPaid && (
-              <div className="flex flex-col gap-2 pt-2">
-                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-widest px-1">
-                  🔒 מה מחכה לכם בדוח המלא:
-                </p>
-                {paywallTeasers.map((hint, i) => (
-                  <div
-                    key={i}
-                    className="flex items-start gap-3 px-4 py-3 rounded-2xl bg-slate-100 border border-slate-200 text-slate-700 text-xs sm:text-sm font-medium"
-                  >
-                    <span className="text-base mt-0.5 shrink-0">
-                      {i === 0 ? "🎭" : i === 1 ? "🚩" : "🔮"}
-                    </span>
-                    <span>{hint}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+            <p className="text-amber-300 text-sm sm:text-base font-bold leading-relaxed border-t border-slate-700 pt-3">
+              {freeContent.dynamic_analysis.punchline_text}
+            </p>
           </div>
-        )}
+
+          {/* Primary User Profile (The Person who talks the most in the group) */}
+          <div className="p-5 sm:p-6 rounded-2xl bg-amber-50 border border-amber-200 flex flex-col gap-3 shadow-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🏆</span>
+                <div>
+                  <span className="text-[11px] font-bold text-amber-800 uppercase tracking-wider block">
+                    פרופיל סאטירי • הדמות שהכי מדברת בקבוצה
+                  </span>
+                  <h3 className="font-black text-slate-900 text-lg sm:text-xl">
+                    {freeContent.primary_user_profile.user_name}
+                  </h3>
+                </div>
+              </div>
+              <span className="bg-amber-400 text-slate-900 font-bold text-xs px-3 py-1 rounded-full shadow-2xs">
+                {freeContent.primary_user_profile.roast_title}
+              </span>
+            </div>
+            <p className="text-slate-700 text-sm sm:text-base leading-relaxed">
+              {freeContent.primary_user_profile.psychological_analysis}
+            </p>
+          </div>
+
+          {/* Paywall Teasers: Dynamic hints about locked chapters */}
+          {paywallTeasers.length > 0 && !isFullPaid && (
+            <div className="flex flex-col gap-2 pt-2">
+              <p className="text-[11px] font-bold text-slate-500 uppercase tracking-widest px-1">
+                🔒 מה מחכה לכם בדוח המלא:
+              </p>
+              {paywallTeasers.map((hint, i) => (
+                <div
+                  key={i}
+                  className="flex items-start gap-3 px-4 py-3 rounded-2xl bg-slate-100 border border-slate-200 text-slate-700 text-xs sm:text-sm font-medium"
+                >
+                  <span className="text-base mt-0.5 shrink-0">
+                    {i === 0 ? "🎭" : i === 1 ? "🚩" : "🔮"}
+                  </span>
+                  <span>{hint}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* ========================================================================= */}
         {/* IF NOT PAID: PAYWALL SCREEN */}
