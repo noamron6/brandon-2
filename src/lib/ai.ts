@@ -5,7 +5,7 @@ import {
   ParticipantStat,
   ChatRoastReport,
 } from "./types";
-import { ParsedMessage } from "./parser";
+import { ParsedMessage, isSystemOrGarbageMessage } from "./parser";
 
 // ─────────────────────────────────────────────
 // SYSTEM PROMPT
@@ -18,7 +18,7 @@ CRITICAL INSTRUCTIONS:
 2. LENGTH & DEPTH: Do not write short, polite sentences. Write long, piercing, hilarious paragraphs. Exaggerate their flaws, mock their texting habits, and act exhausted by their nonsense.
 3. SLANG: Use modern, authentic Israeli slang (e.g., פומו, חיבס, נסחפים, קרינג', חיים בסרט).
 4. LANGUAGE: The output MUST be entirely in Hebrew (except JSON keys).
-5. QUOTES: Use ONLY real, verbatim quotes from the provided message sample. Never invent quotes.
+5. QUOTES: Use ONLY real, verbatim quotes from the provided message sample. Never invent quotes. NEVER quote system messages like encryption notices or media omitted.
 
 Return ONLY a valid JSON object with this exact structure, without any Markdown or text outside the JSON:
 
@@ -138,7 +138,70 @@ function cleanAndParseJson(raw: string): any {
 }
 
 // ─────────────────────────────────────────────
-// MOCK GENERATOR (no API key / dev mode)
+// GEMINI 1.5 FLASH CALLER (REST)
+// ─────────────────────────────────────────────
+
+async function callGemini(apiKey: string, prompt: string): Promise<any> {
+  const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      system_instruction: {
+        parts: [{ text: SYSTEM_PROMPT }],
+      },
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: prompt }],
+        },
+      ],
+      generationConfig: {
+        temperature: 0.92,
+        responseMimeType: "application/json",
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Gemini API error (${res.status}): ${errText}`);
+  }
+
+  const data = await res.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error("Gemini returned empty content");
+  return cleanAndParseJson(text);
+}
+
+// ─────────────────────────────────────────────
+// CLAUDE CALLER (SDK)
+// ─────────────────────────────────────────────
+
+async function callClaude(apiKey: string, prompt: string): Promise<any> {
+  const model = process.env.CLAUDE_MODEL || "claude-3-5-sonnet-20241022";
+  const anthropic = new Anthropic({ apiKey: apiKey.trim() });
+
+  const response: any = await (anthropic.messages.create as any)({
+    model,
+    max_tokens: 3000,
+    temperature: 0.93,
+    system: SYSTEM_PROMPT,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const firstBlock = response.content?.[0];
+  if (!firstBlock || firstBlock.type !== "text") {
+    throw new Error("Claude returned non-text response");
+  }
+
+  return cleanAndParseJson(firstBlock.text);
+}
+
+// ─────────────────────────────────────────────
+// MOCK GENERATOR (Dev / Offline fallback)
 // ─────────────────────────────────────────────
 
 export function generateMockChatRoast(
@@ -152,15 +215,22 @@ export function generateMockChatRoast(
     participants.find((p) => p.name !== primary)?.name || participants[1]?.name || "מיכל";
   const total = totalMessages ?? participants.reduce((s, p) => s + p.count, 0);
 
-  const realQuote1 = sampleMessages?.find(
-    (m) => m.text.length > 8 && m.text.length < 120
-  );
-  const realQuote2 = sampleMessages?.find(
+  // Filter messages to pick genuine conversational quotes (no system garbage!)
+  const cleanMessages = (sampleMessages || []).filter(
     (m) =>
-      m.text.length > 8 &&
-      m.text.length < 120 &&
-      m !== realQuote1
+      !isSystemOrGarbageMessage(m.text) &&
+      m.text.length >= 4 &&
+      m.text.length <= 150 &&
+      !m.text.includes("הוצפנו") &&
+      !m.text.includes("מוצפנות") &&
+      !m.text.includes("שיחה קולית")
   );
+
+  const realQuote1 = cleanMessages.find((m) => m.sender === primary) || cleanMessages[0];
+  const realQuote2 =
+    cleanMessages.find((m) => m.sender === secondary && m !== realQuote1) ||
+    cleanMessages[1] ||
+    cleanMessages[0];
 
   return {
     analysis_metadata: {
@@ -168,29 +238,29 @@ export function generateMockChatRoast(
       grammar_used: "זכר רבים",
     },
     free_content: {
-      headline: `משבר זהות ו-V כחולים: הדוח הקשה של ${primary} ו-${secondary}`,
-      opening_intro: `קראתי ${total} הודעות שלכם ואני עדיין מחפש את הנפש שלי. עברתי על ויכוחים קוסמיים על איפה לאכול, תירוצים שאפילו עורך דין סניגור היה מסרב לייצג, ודפוסים תקשורתיים שהיו מרתקים פסיכיאטרים בכל העולם. אתם לא קבוצת וואטסאפ — אתם ניסוי חברתי שיצא מידי שליטה, וה-IRB שאישר אתכם חייב לאבד את הרישיון.`,
+      headline: `חקירת עומק: מה באמת קורה בצ'אט של ${primary} ו-${secondary}?`,
+      opening_intro: `קראתי ${total} הודעות שלכם והמוח שלי מבקש להתפטר. מהשנייה הראשונה שמנתחים את השיחה הזאת ברור שלא מדובר בהתנהלות של אנשים בוגרים, אלא בקומדיית טעויות בלתי נגמרת. ${primary} מוביל את שיאי ההודעות בביטחון עצמי מופרז, בעוד ${secondary} מתמחה בהתעלמות מנומסת ופסיב-אגרסיב דיגיטלי.`,
       dynamic_analysis: {
-        section_title: `החמ"ל של הפחדנות: איך ${primary} ו-${secondary} מנהלים את אי-הוודאות`,
-        intro_text: `יש לכם הרגל שגורם לי לרצות לפתוח קרן גמלאות ולפרוש מיד: ${primary} שולח הצעה מלאת אנרגיה ו-${secondary} מגיב שעות מאוחר יותר כאילו ההודעה הגיעה בדואר שבוע ראשון. זה לא עצלות — זו אסטרטגיה. מישהו כאן חי בסרט שבו הוא הדמות הכי מבוקשת במסיבה, ומישהו אחר מחפש דרך לא לאכזב בלי להתחייב לשום דבר.`,
+        section_title: `החמ"ל של הקבוצה: תכנון אינסופי של תוכניות שלא קורות`,
+        intro_text: `הדפוס המרכזי שחוזר על עצמו לאורך מאות הודעות הוא פשוט: ${primary} זורק רעיונות מלאי התלהבות, שאר הקבוצה מורחת את הזמן בדיונים עקרים על איפה ומתי, והכל מסתיים באפס מעשים והרבה סינונים. הנה דוגמה חיה מתוך השיחה:`,
         proof_quotes: [
           {
             sender: realQuote1?.sender || primary,
-            context: realQuote1?.time || "בשעה לא סבירה",
-            text: realQuote1?.text || "יאללה חברים, מה הולך? מישהו חי פה?",
+            context: realQuote1?.time || "באמצע היום",
+            text: realQuote1?.text || "יאללה מה עושים? חייבים לסגור משהו",
           },
           {
             sender: realQuote2?.sender || secondary,
-            context: realQuote2?.time || "שלוש שעות מאוחר יותר",
-            text: realQuote2?.text || "סבבה, הייתי עסוק.",
+            context: realQuote2?.time || "כעבור כמה שעות",
+            text: realQuote2?.text || "סבבה תעדכנו מה נסגר",
           },
         ],
-        punchline_text: `זהו. זה הסיכום של מערכת היחסים שלכם בשני משפטים. ${primary} שורף קלוריות ו-${secondary} מנהל קריירה של העדרות מנוהלת. מחיאות כפיים לכולם.`,
+        punchline_text: `זהו תמצית הקשר שלכם במשפט אחד: מישהו שורף אנרגיה ומישהו אחר משאיר לעצמו פתח מילוט של 100%.`,
       },
       primary_user_profile: {
         user_name: primary,
-        roast_title: "מנכ״ל משרד הדמיון המודרך — יו״ר ועדת הבוטלים הלאומית",
-        psychological_analysis: `${primary} הוא מה שקורה כשאדם עם פומו ענק כותב הודעות במקום לחיות את החיים שהוא תכנן. הטקסטים שלו מלאים בסימני קריאה שמסגירים חרדה מוסווית — כל "יאללה!!!" הוא בעצם "בבקשה תשימו לב אליי". הוא שולח הצעות גדולות ב-01:30 בלילה, נעלם כשצריך להוציא כרטיס אשראי, ובכל זאת מתפלא שאנשים מפסיקים לחכות לו. תסמונת קלאסית של אדם שמאמין שהכוונה מחשבה, וששליחת הודעה היא בעצמה מחוות. היה ״מנהל פרויקטים״ בחברת סטארטאפ שנסגרה בדיוק בגלל אנשים כמוהו.`,
+        roast_title: "מנכ״ל משרד הדמיון המודרך ושיאן ההודעות",
+        psychological_analysis: `${primary} לא מסוגל לסבול דממת אלחוט בצ'אט. הוא חייב להיות זה שיוזם, מציע ומציף את הקבוצה בהודעות בכל שעה ביממה, מתוך פחד עמוק להחמיץ משהו (FOMO כרוני). הבעיה היא שברגע שצריך לסגור תאריך או לקחת אחריות, הוא נעלם כאילו לא היה. אדם שמאמין שכתיבת הודעה שווה להוצאה לפועל.`,
       },
     },
     paywall_teasers: [
@@ -202,20 +272,20 @@ export function generateMockChatRoast(
       secondary_user_profile: {
         user_name: secondary,
         roast_title: "שר הסינון ומנכ״ל אגף ה-V הכחולים",
-        psychological_analysis: `${secondary} מייצג תופעה מרתקת שמדענים מכנים "פאסיב אגרסיב דיגיטלי מתקדם". הוא קורא הכל ברגע שזה מגיע — הנתונים מוכיחים — ואז בוחר לענות בשעה שמתאימה *לו*, שהיא תמיד השעה שפחות נוחה לאחר. זו לא עצלות, זו שליטה. ${secondary} הבין שבעידן הסמארטפון, הכוח הוא אצל מי שלא מגיב — ובנה קריירה שלמה על הכוח הזה. הבעיה? כולם ראו, כולם יודעים, ואף אחד לא אומר לו כי גם הם עושים את זה.`,
+        psychological_analysis: `${secondary} מייצג תופעה מרתקת של שליטה דרך אי-מענה. הוא רואה כל הודעה שניה אחרי שהיא מגיעה, אבל עונה רק כשזה נוח לו בלבד. היכולת שלו לקרוא הצעה, להתעלם ממנה לשש שעות ואז לחזור עם 'אה לא ראיתי' היא פסגת אמנות התירוצים.`,
       },
       toxic_traits: [
         {
-          trait_name: "תסמונת ה-V הכחולים ואי-המענה המתוכנן",
-          explanation: `בקבוצה הזאת יש הסכמה לא כתובה ולא מדוברת: אפשר לראות הודעה, לחשוב עליה, להתלבט, לשתות קפה, ורק אז — אולי — לענות. ומה קורה כשמישהו *מעז* להצביע על ה-V הכחול? מיד מגיעה ההגנה הקלאסית: "הייתי עסוק", "לא ראיתי", "הטלפון היה שקט". אבל הנתונים לא משקרים — ממוצע זמן מענה של 4.2 שעות לשאלות "מה קורה?" ו-12 שניות לשאלות "מה אוכלים?" זה לא אקראי. זה פוליטיקה.`,
+          trait_name: "תסמונת ה-V הכחולים והמענה המתוזמן",
+          explanation: `בקבוצה הזו קיימת הסכמה שבשתיקה: הודעות על נושאים רציניים זוכות לשתיקה של 4 שעות, אבל מספיק שמישהו מזכיר אוכל או שולח סרטון כדי שכולם יגיבו תוך 10 שניות.`,
         },
         {
-          trait_name: "תכנון-אובר של דברים שלא יקרו לעולם",
-          explanation: `אתם מתכננים. הרבה. רק שהביצוע חי בממד מקביל שאף אחד מכם לא הגיע אליו עדיין. כל תוכנית מתחילה ב"יאללה, הפעם באמת!" ונגמרת ב"אוקיי בטח שבוע הבא". יש בצ'אט שלכם לפחות 7 תוכניות שהושקעו בהן יותר ממחצית שעה של הודעות ולא יצאו לפועל. ה-7 הן: טיול שבוע, ״ערב חברים רציני״, ״להתחיל לרוץ ביחד״, בישול ביחד, ״לראות סרט״, פגישה שהוזזה 4 פעמים, ועוד אחת שאפילו אתם לא זוכרים. המשך פורה.`,
+          trait_name: "תכנון-אובר שמסתיים בביטול",
+          explanation: `רמת ההשקעה בשיחות תכנון היא מגלומנית, אך שיעור הביצוע בפועל עומד על אחוזים בודדים. הקבוצה מתמחה בשיחות של 50 הודעות על מקום ישיבה שמסתיימות ב'טוב נדבר מחר'.`,
         },
       ],
-      the_unspoken_truth: `מה שאף אחד לא אומר בקבוצה הזאת הוא פשוט מאוד: ${primary} מרגיש שהוא משקיע יותר מ-${secondary}, ו-${secondary} מרגיש ש-${primary} דורש יותר ממה שהוא מסוגל לתת. שניהם צודקים. שניהם לא יגידו את זה. ובמקום שיחה של חמש דקות שתפתור הכל, הם יוסיפו עוד 2,000 הודעות לארכיון המתעסק בכלום ומרגיש שמשהו בעייתי אבל אי אפשר לשים עליו אצבע. זה המבנה המושלם להמשיך בדיוק כמו עכשיו עוד עשר שנים.`,
-      final_verdict: `בעוד חמש שנים: ${primary} עדיין ישלח "יאללה מתי נפגש" ב-01:30 בלילה, ו-${secondary} עדיין ישים V כחול ויענה למחרת בארוחת צהריים. הקבוצה תהיה קיימת, לעתים רחוקות פעילה, ולעתים קרובות ישמשו בה להפצת מימים ולינקים שאף אחד לא לוחץ עליהם. מישהו יוסיף "חבר חדש" שאף אחד לא יזכור מי הזמין אותו, מישהו יעזוב בשקט ויחזור שבוע אחר כך בלי שיגידו כלום. בסופו של דבר, הקשר הזה יהיה בדיוק כמו הצ'אט — קיים, פעיל מדי פעם, ובלי שאיש יודע בדיוק למה.`,
+      the_unspoken_truth: `מה שאף אחד לא אומר בצ'אט הזה הוא ש-${primary} מרגיש שהוא היחיד שמחזיק את הקשר, בעוד ש-${secondary} מרגיש שמופעל עליו לחץ מתמיד. שניהם לא מדברים על זה ישירות וממשיכים במשחק הפסיב-אגרסיב הדיגיטלי.`,
+      final_verdict: `בעוד חמש שנים: ${primary} עדיין ישלח הצעות נלהבות בשעות לא שגרתיות, ו-${secondary} עדיין ישים V כחול ויענה למחרת בצהריים. הצ'אט ימשיך להתקיים כארכיון של כוונות טובות שלא מומשו מעולם.`,
     },
     stats: {
       totalMessages: total,
@@ -225,7 +295,7 @@ export function generateMockChatRoast(
 }
 
 // ─────────────────────────────────────────────
-// MAIN GENERATOR (live API call)
+// MAIN GENERATOR (Calls Gemini 1.5 Flash or Claude)
 // ─────────────────────────────────────────────
 
 export async function generateChatRoastReport(
@@ -235,20 +305,35 @@ export async function generateChatRoastReport(
   totalMessages: number,
   sampleMessages: ParsedMessage[]
 ): Promise<ChatRoastReport> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  const model = process.env.CLAUDE_MODEL || "claude-3-5-sonnet-20241022";
+  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
 
-  if (!apiKey || apiKey.trim() === "" || apiKey === "your-anthropic-key-here") {
+  // Filter messages to clean out WhatsApp system disclaimers
+  const filteredMessages = sampleMessages.filter(
+    (m) =>
+      !isSystemOrGarbageMessage(m.text) &&
+      m.text.length >= 3 &&
+      !m.text.includes("הוצפנו") &&
+      !m.text.includes("מוצפנות") &&
+      !m.text.includes("שיחה קולית")
+  );
+
+  // If no API key configured, use mock
+  if (
+    (!geminiKey || geminiKey.trim() === "" || geminiKey.includes("your-gemini-key")) &&
+    (!anthropicKey || anthropicKey.trim() === "" || anthropicKey.includes("your-anthropic-key"))
+  ) {
+    console.warn(
+      "[AI Chat Roast] No GEMINI_API_KEY or ANTHROPIC_API_KEY found in .env.local! Using mock data generator."
+    );
     await new Promise((r) => setTimeout(r, 1200));
     return generateMockChatRoast(
       participants,
       userParticipant,
       totalMessages,
-      sampleMessages
+      filteredMessages
     );
   }
-
-  const anthropic = new Anthropic({ apiKey });
 
   const contextHebrewMap: Record<ChatContext, string> = {
     couple: "קשר רומנטי / זוגי",
@@ -266,16 +351,11 @@ export async function generateChatRoastReport(
     .map((p) => `${p.name}: ${p.count} הודעות (${p.percentage}%)`)
     .join(", ");
 
-  // Pick up to 40 varied messages across the chat for quote mining
-  const messageSample = sampleMessages
-    .filter((m) => m.text.length > 6 && m.text.length < 200)
-    .reduce<ParsedMessage[]>((acc, m) => {
-      // Spread selection: pick from beginning, middle, and end
-      acc.push(m);
-      return acc;
-    }, [])
-    .filter((_, i) => i % Math.max(1, Math.floor(sampleMessages.length / 40)) === 0)
-    .slice(0, 40)
+  // Pick up to 50 genuine conversation messages across the chat
+  const step = Math.max(1, Math.floor(filteredMessages.length / 50));
+  const messageSample = filteredMessages
+    .filter((_, i) => i % step === 0)
+    .slice(0, 50)
     .map((m) => `[${m.time || "?"}] ${m.sender}: ${m.text}`)
     .join("\n");
 
@@ -283,40 +363,50 @@ export async function generateChatRoastReport(
 
 - Primary User: ${userParticipant || participants[0]?.name || "לא ידוע"}
 - Other Participants: ${otherNames || "לא ידוע"}
-- Chat Type: ${contextHebrewMap[context]}
+- Chat Type: ${contextHebrewMap[context] || "קבוצת חברים"}
 - Total Messages: ${totalMessages}
 - Participant breakdown: ${participantBreakdown}
 
-Selected messages for quotes (use ONLY these for proof_quotes — exact text):
+Selected messages for quotes (use ONLY these real messages for proof_quotes — exact verbatim text):
 ${messageSample || "(no sample available)"}
 
 Generate the JSON now.`;
 
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  // Attempt 1: Gemini (if key exists)
+  if (geminiKey && geminiKey.trim() !== "" && !geminiKey.includes("your-gemini-key")) {
     try {
-      const response: any = await (anthropic.messages.create as any)({
-        model,
-        max_tokens: 3000,
-        temperature: 0.93,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: "user", content: userPrompt }],
-      });
-
-      const firstBlock = response.content[0];
-      if (firstBlock.type !== "text") throw new Error("No text in response");
-
-      const parsed = cleanAndParseJson(firstBlock.text);
-      const validated = ChatRoastZodSchema.parse(parsed);
-
+      console.log("[AI Chat Roast] Calling Google Gemini 1.5 Flash...");
+      const rawJson = await callGemini(geminiKey, userPrompt);
+      const validated = ChatRoastZodSchema.parse(rawJson);
       return {
         ...validated,
         stats: { totalMessages, participants },
       } as ChatRoastReport;
     } catch (err: any) {
-      console.warn(`[AI Chat Roast] Attempt ${attempt} failed:`, err.message || err);
-      if (attempt === 1) await new Promise((r) => setTimeout(r, 900));
+      console.warn("[AI Chat Roast] Gemini call failed:", err.message || err);
     }
   }
 
-  return generateMockChatRoast(participants, userParticipant, totalMessages, sampleMessages);
+  // Attempt 2: Claude (if key exists)
+  if (anthropicKey && anthropicKey.trim() !== "" && !anthropicKey.includes("your-anthropic-key")) {
+    try {
+      console.log("[AI Chat Roast] Calling Claude...");
+      const rawJson = await callClaude(anthropicKey, userPrompt);
+      const validated = ChatRoastZodSchema.parse(rawJson);
+      return {
+        ...validated,
+        stats: { totalMessages, participants },
+      } as ChatRoastReport;
+    } catch (err: any) {
+      console.warn("[AI Chat Roast] Claude call failed:", err.message || err);
+    }
+  }
+
+  console.warn("[AI Chat Roast] All LLM calls failed. Falling back to mock generator.");
+  return generateMockChatRoast(
+    participants,
+    userParticipant,
+    totalMessages,
+    filteredMessages
+  );
 }

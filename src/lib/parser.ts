@@ -30,6 +30,41 @@ const COMMON_STOP_WORDS = new Set([
   "media", "omitted", "image", "sticker", "audio", "video", "ללא", "מדיה", "הושמטה",
 ]);
 
+const SYSTEM_MESSAGE_PATTERNS = [
+  /ההודעות והשיחות מוצפנות מקצה לקצה/i,
+  /מוצפנות מקצה לקצה/i,
+  /Messages and calls are end-to-end encrypted/i,
+  /end-to-end encrypted/i,
+  /מדיה לא נכללה/i,
+  /מדיה הושמטה/i,
+  /<Media omitted>/i,
+  /<מדיה הושמטה>/i,
+  /שיחה קולית/i,
+  /שיחת וידאו/i,
+  /Missed voice call/i,
+  /Missed video call/i,
+  /voice call/i,
+  /video call/i,
+  /הודעה זו נמחקה/i,
+  /ההודעה הזו נמחקה/i,
+  /This message was deleted/i,
+  /You deleted this message/i,
+  /קוד אבטחה/i,
+  /security code/i,
+  /נוספ.*לקבוצה/i,
+  /עזב.*את הקבוצה/i,
+  /הסיר.*את/i,
+  /שינה.*את נושא/i,
+  /שינה.*את תמונת/i,
+  /יצר.*את הקבוצה/i,
+];
+
+export function isSystemOrGarbageMessage(text: string): boolean {
+  const clean = text.trim();
+  if (clean.length < 2) return true;
+  return SYSTEM_MESSAGE_PATTERNS.some((pattern) => pattern.test(clean));
+}
+
 /**
  * Extracts participant messages and metadata from WhatsApp and standard chat exports
  */
@@ -55,7 +90,7 @@ export function parseChatHistory(
 
     const match = trimmed.match(pattern1);
     if (match) {
-      if (currentMsg) {
+      if (currentMsg && !isSystemOrGarbageMessage(currentMsg.text)) {
         parsedMessages.push(currentMsg);
       }
       let sender = match[2].trim();
@@ -75,7 +110,7 @@ export function parseChatHistory(
     }
   }
 
-  if (currentMsg) {
+  if (currentMsg && !isSystemOrGarbageMessage(currentMsg.text)) {
     parsedMessages.push(currentMsg);
   }
 
@@ -89,11 +124,14 @@ export function parseChatHistory(
         if (nameMapping && nameMapping[sender]) {
           sender = nameMapping[sender];
         }
-        parsedMessages.push({
-          time: "",
-          sender,
-          text: line.slice(idx + 1).trim(),
-        });
+        const text = line.slice(idx + 1).trim();
+        if (!isSystemOrGarbageMessage(text)) {
+          parsedMessages.push({
+            time: "",
+            sender,
+            text,
+          });
+        }
       }
     }
   }
