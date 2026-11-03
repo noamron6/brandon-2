@@ -1,6 +1,66 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSummaryTeaser, getSummaryFull, getSummaryRaw } from "@/lib/db";
-import { FreeContent } from "@/lib/types";
+import { FreeContent, PremiumContent } from "@/lib/types";
+
+function normalizePremiumContent(paidText: string): PremiumContent | null {
+  if (!paidText) return null;
+  try {
+    const parsed = JSON.parse(paidText);
+
+    // If already in the unified ChatRoast format:
+    if (parsed.secondary_user_profile && parsed.toxic_traits) {
+      return parsed as PremiumContent;
+    }
+
+    // Fallback if stored under previous ChatWrapped structure
+    const secProfile = parsed.profiles?.[1] || parsed.profiles?.[0] || {
+      name: "המשתתף השני",
+      title: "שר הסינון ומנכ״ל אגף ה-V הכחולים",
+      roast: "אמן ההיעלמות הדיגיטלית. צופה בכל ההודעות אבל בוחר להגיב רק כשיש לו מה להרוויח.",
+    };
+
+    const toxicTraits =
+      Array.isArray(parsed.rulebook) && parsed.rulebook.length > 0
+        ? parsed.rulebook.map((r: any) => ({
+            trait_name: r.title,
+            explanation: r.description,
+          }))
+        : [
+            {
+              trait_name: "תסמונת ה-V הכחולים והסינון המאורגן",
+              explanation: "הודעות נקראות באופן מיידי אך זוכות למענה רק כעבור שעות רבות של שתיקה רועמת.",
+            },
+            {
+              trait_name: "תכנון מגלומני של אירועים שלעולם לא יקרו",
+              explanation: "שעות של שיחות והתלבטויות על מקום מפגש, שמסתיימות באפס יציאות בפועל.",
+            },
+          ];
+
+    const theUnspokenTruth =
+      parsed.dramaMoment?.story ||
+      parsed.conclusion ||
+      "מה שאף אחד לא מעז לומר בצ'אט הזה הוא שכולם מרגישים שהם משקיעים יותר מהאחרים, אבל אף אחד לא יעז לפתוח את זה באמת.";
+
+    const finalVerdict =
+      Array.isArray(parsed.forecast2035) && parsed.forecast2035.length > 0
+        ? parsed.forecast2035.map((f: any) => `${f.name}: ${f.prediction}`).join("\n\n")
+        : parsed.conclusion ||
+          "בעוד חמש שנים אתם עדיין תתלבטו איפה לאכול, תשלחו סטיקרים במקום לענות ישירות, ותמשיכו לתחזק את הצ'אט הכאוטי הזה.";
+
+    return {
+      secondary_user_profile: {
+        user_name: secProfile.name,
+        roast_title: secProfile.title || "שר הסינון ומנכ״ל ה-V הכחול",
+        psychological_analysis: secProfile.roast || "",
+      },
+      toxic_traits: toxicTraits,
+      the_unspoken_truth: theUnspokenTruth,
+      final_verdict: finalVerdict,
+    };
+  } catch (e) {
+    return null;
+  }
+}
 
 function normalizeFreeContent(teaserData: any, rawRecord?: any): FreeContent | null {
   // 1. Direct free_content
@@ -151,12 +211,7 @@ export async function GET(
         teaserData = {};
       }
 
-      let parsedPremium: any = null;
-      try {
-        parsedPremium = JSON.parse(fullRecord.paid_text);
-      } catch (e) {
-        parsedPremium = null;
-      }
+      const parsedPremium = normalizePremiumContent(fullRecord.paid_text);
 
       const freeContent = normalizeFreeContent(teaserData, fullRecord);
 
@@ -191,12 +246,7 @@ export async function GET(
           teaserData = {};
         }
 
-        let parsedPremium: any = null;
-        try {
-          parsedPremium = JSON.parse(raw.paid_text);
-        } catch (e) {
-          parsedPremium = null;
-        }
+        const parsedPremium = normalizePremiumContent(raw.paid_text);
 
         const freeContent = normalizeFreeContent(teaserData, raw);
 
@@ -240,6 +290,25 @@ export async function GET(
     const raw = getSummaryRaw(id);
     const freeContent = normalizeFreeContent(teaserData, raw);
 
+    // If report has already been paid, return the full premium content automatically!
+    if (raw && raw.paid) {
+      const parsedPremium = normalizePremiumContent(raw.paid_text);
+      return NextResponse.json({
+        id: teaser.id,
+        title: teaser.title,
+        intro: freeContent?.opening_intro || teaserData.intro || teaser.free_text,
+        analysis_metadata: teaserData.analysis_metadata || null,
+        free_content: freeContent,
+        paywall_teasers: teaserData.paywall_teasers || teaserData.freeTeaser?.paywall_teasers || [],
+        stats: teaserData.stats || null,
+        premium_content: parsedPremium,
+        paid: true,
+        created_at: teaser.created_at,
+        paid_at: raw.paid_at,
+        token: raw.access_token,
+      });
+    }
+
     return NextResponse.json({
       id: teaser.id,
       title: teaser.title,
@@ -248,7 +317,7 @@ export async function GET(
       free_content: freeContent,
       paywall_teasers: teaserData.paywall_teasers || teaserData.freeTeaser?.paywall_teasers || [],
       stats: teaserData.stats || null,
-      paid: teaser.paid,
+      paid: false,
       created_at: teaser.created_at,
     });
   } catch (error: any) {
