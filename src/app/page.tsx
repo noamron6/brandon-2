@@ -224,7 +224,7 @@ export default function HomePage() {
       }
 
       // Success -> Redirect to Free Teaser Page!
-      router.push(`/summary/${resData.id}`);
+      window.location.href = `/summary/${resData.id}`;
     } catch (err: any) {
       setErrorMessage(err.message || "שגיאה בתהליך. אנא נסה שנית.");
       setIsLoading(false);

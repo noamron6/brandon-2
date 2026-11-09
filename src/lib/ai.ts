@@ -142,38 +142,51 @@ function cleanAndParseJson(raw: string): any {
 // ─────────────────────────────────────────────
 
 async function callGemini(apiKey: string, prompt: string): Promise<any> {
-  const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`;
+  const preferredModel = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  const candidateModels = [preferredModel, "gemini-2.5-flash", "gemini-flash-latest"];
+  const uniqueModels = Array.from(new Set(candidateModels));
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      system_instruction: {
-        parts: [{ text: SYSTEM_PROMPT }],
-      },
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: prompt }],
-        },
-      ],
-      generationConfig: {
-        temperature: 0.92,
-        responseMimeType: "application/json",
-      },
-    }),
-  });
+  let lastError: Error | null = null;
+  for (const model of uniqueModels) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`;
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Gemini API error (${res.status}): ${errText}`);
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: {
+            parts: [{ text: SYSTEM_PROMPT }],
+          },
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: prompt }],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.92,
+            responseMimeType: "application/json",
+          },
+        }),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Gemini (${model}) error (${res.status}): ${errText}`);
+      }
+
+      const data = await res.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) throw new Error(`Gemini (${model}) returned empty content`);
+      return cleanAndParseJson(text);
+    } catch (err: any) {
+      console.warn(`[AI Chat Roast] Attempt with ${model} failed:`, err.message || err);
+      lastError = err;
+    }
   }
 
-  const data = await res.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error("Gemini returned empty content");
-  return cleanAndParseJson(text);
+  throw lastError || new Error("All Gemini models failed");
 }
 
 // ─────────────────────────────────────────────
